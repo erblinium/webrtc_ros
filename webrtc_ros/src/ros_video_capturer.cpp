@@ -55,39 +55,39 @@ void RosVideoCapturer::imageCallback(const sensor_msgs::msg::Image::ConstPtr& ms
   }
   int64_t camera_time_us = msg->header.stamp.nanosec / 1000;
   int64_t system_time_us = rclcpp::Clock().now().nanoseconds() / 1000;
-  cv::Rect roi;
-  int out_width, out_height;
-  int64_t translated_camera_time_us;
-  if (AdaptFrame(bgr.cols, bgr.rows, system_time_us, &out_width, &out_height, &roi.width, &roi.height, &roi.x, &roi.y))
-  {
-    // Warning: When resizing to YUV format image width and height must be even size (w%2 == 0 )
-    cv::Mat yuv;
-    if (out_width == roi.width && out_height == roi.height)
-    {
-      cv::cvtColor(bgr(roi), yuv, CV_BGR2YUV_I420);
-    }
-    else
-    {
-      cv::Mat m;
-      cv::resize(bgr(roi), m, cv::Size2i(out_width, out_height), 0, 0, out_width < roi.width ? cv::INTER_AREA : cv::INTER_LINEAR);
-      cv::cvtColor(m, yuv, CV_BGR2YUV_I420);
-    }
-    uint8_t* y = yuv.data;
-    uint8_t* u = y + (out_width * out_height);
-    uint8_t* v = u + (out_width * out_height) / 4;
+  // Warning: When converting to YUV format image width and height must be even size (w%2 == 0 )
+  // Check if the image dimensions are odd
+  bool width_needs_adjusting = (bgr.cols % 2) != 0;
+  bool height_needs_adjusting = (bgr.rows % 2) != 0;
+  auto roi_width_crop = width_needs_adjusting ? bgr.cols & -2 : bgr.cols;
+  auto roi_heigth_crop = height_needs_adjusting ? bgr.rows & -2 : bgr.rows;
 
-    std::shared_ptr<webrtc::VideoFrame> frame = std::make_shared<webrtc::VideoFrame>(
-        webrtc::I420Buffer::Copy(out_width, out_height, y, out_width, u, out_width / 2, v, out_width / 2),
-        webrtc::kVideoRotation_0,
-        system_time_us
-    );
-    // Apparently, the OnFrame() method could not be called from arbitrary threads in ancient times, and there
-    // used to be all kinds of shenanigans here to make sure it is called from the original thread, causing
-    // a subtle deadlock bug on object destruction.
-    //
-    // So I decided to be blunt and just call it like it is:
-    OnFrame(*frame);
+  if (width_needs_adjusting || height_needs_adjusting) {
+    // Crop the image to make dimensions even
+    auto roi = cv::Rect(0, 0, roi_width_crop, roi_heigth_crop);
+    bgr = bgr(roi);
   }
+
+  cv::Mat yuv;
+  cv::cvtColor(bgr, yuv, CV_BGR2YUV_I420);
+
+  auto out_width = bgr.cols;
+  auto out_height = bgr.rows;
+  uint8_t* y = yuv.data;
+  uint8_t* u = y + (out_width * out_height);
+  uint8_t* v = u + (out_width * out_height) / 4;
+
+  std::shared_ptr<webrtc::VideoFrame> frame = std::make_shared<webrtc::VideoFrame>(
+      webrtc::I420Buffer::Copy(out_width, out_height, y, out_width, u, out_width / 2, v, out_width / 2),
+      webrtc::kVideoRotation_0,
+      system_time_us
+  );
+  // Apparently, the OnFrame() method could not be called from arbitrary threads in ancient times, and there
+  // used to be all kinds of shenanigans here to make sure it is called from the original thread, causing
+  // a subtle deadlock bug on object destruction.
+  //
+  // So I decided to be blunt and just call it like it is:
+  OnFrame(*frame);
 }
 
 
